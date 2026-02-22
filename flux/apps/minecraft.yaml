@@ -42,11 +42,11 @@ spec:
           host: "minecraft"
           port: 25565
 
-    service:
-      # NodePort exposto ao VPS edge na porta 25565
-      type: NodePort
-      port: 25565
-      nodePort: 25565
+    services:
+      minecraft:
+        type: NodePort
+        port: 25565
+        nodePort: 30565
 ---
 # Servidor Minecraft com ClusterIP — só acessível internamente via mc-router
 apiVersion: helm.toolkit.fluxcd.io/v2
