@@ -14,7 +14,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SSH_DIR="$SCRIPT_DIR/.ssh"
 SSH_KEY="$SSH_DIR/id_ed25519"
 INVENTORY_FILE="$SCRIPT_DIR/inventory.ini"
-KUBESPRAY_DIR="$SCRIPT_DIR/kubespray"  # Agora fica dentro do repositório!
 KUBESPRAY_VERSION="v2.24.1"
 
 echo "=== Ansible Controller Setup ==="
@@ -175,40 +174,22 @@ fi
 echo ""
 
 # ============================================================
-# Step 3: Download and setup Kubespray
+# Step 3: Pull Kubespray Docker image
 # ============================================================
-echo "[3/5] Setting up Kubespray..."
+echo "[3/4] Pulling Kubespray Docker image..."
 
-if [ -d "$KUBESPRAY_DIR" ]; then
-  echo "  ✓ Kubespray already exists at $KUBESPRAY_DIR"
-else
-  echo "  Cloning Kubespray (version $KUBESPRAY_VERSION)..."
-  git clone --depth 1 --branch "$KUBESPRAY_VERSION" https://github.com/kubernetes-sigs/kubespray.git "$KUBESPRAY_DIR"
-  echo "  ✓ Kubespray cloned"
-fi
-
-cd "$KUBESPRAY_DIR"
-
-# Pull official Kubespray Docker image
-echo "  Pulling official Kubespray Docker image..."
 if docker pull "quay.io/kubespray/kubespray:$KUBESPRAY_VERSION" >/dev/null 2>&1; then
-  echo "  ✓ Docker image pulled"
+  echo "  ✓ Docker image pulled: quay.io/kubespray/kubespray:$KUBESPRAY_VERSION"
 else
   echo "  ⚠ Failed to pull image, will try again during install"
 fi
-
-cd "$SCRIPT_DIR"
-echo "  ✓ Kubespray setup complete"
-
-# Create mycluster inventory directory
-mkdir -p "$KUBESPRAY_DIR/inventory/mycluster"
 
 echo ""
 
 # ============================================================
 # Step 4: Generate inventory file
 # ============================================================
-echo "[4/5] Generating Ansible inventory..."
+echo "[4/4] Generating Ansible inventory..."
 
 cat > "$INVENTORY_FILE" << EOF
 # Ansible inventory for Kubernetes cluster
@@ -252,9 +233,9 @@ echo "  ✓ Inventory file created at $INVENTORY_FILE"
 echo ""
 
 # ============================================================
-# Step 5: Test connectivity
+# Test connectivity
 # ============================================================
-echo "[5/5] Testing SSH connectivity..."
+echo "Testing SSH connectivity..."
 
 cd "$SCRIPT_DIR"
 
@@ -273,9 +254,9 @@ echo "Configuration:"
 echo "  Master node: k8s-master ($MASTER_IP)"
 echo "  SSH key: $SSH_KEY"
 echo "  Inventory: $INVENTORY_FILE"
-echo "  Kubespray: $KUBESPRAY_DIR"
+echo "  Kubespray image: quay.io/kubespray/kubespray:$KUBESPRAY_VERSION"
 echo ""
 echo "Next steps:"
-echo "  1. (Optional) Customize cluster config in group_vars/"
+echo "  1. (Optional) Customize cluster config in inventory/group_vars/"
 echo "  2. Run: ./install-k8s.sh"
 echo ""

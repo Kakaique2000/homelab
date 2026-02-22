@@ -7,7 +7,9 @@ upstream_dns_servers:
   - 1.1.1.1
 
 # NTP servers for time synchronization
-ntp_enabled: true
+# Ubuntu Noble already ships with systemd-timesyncd and ntpsec.
+# Installing the legacy ntp package conflicts with both (time-daemon conflict).
+ntp_enabled: false
 
 # Enable/disable swap (Kubernetes requires swap to be disabled)
 # Kubespray will handle this automatically

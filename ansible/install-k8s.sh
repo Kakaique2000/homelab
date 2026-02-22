@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installs Kubernetes cluster using Kubespray
+# Installs Kubernetes cluster using Kubespray Docker image
 
 set -e
 
@@ -10,8 +10,8 @@ if [[ "$1" == "-v" ]] || [[ "$1" == "--verbose" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KUBESPRAY_DIR="$SCRIPT_DIR/kubespray"  # Kubespray dentro do repositório
 KUBESPRAY_VERSION="v2.24.1"
+INVENTORY_DIR="$SCRIPT_DIR/inventory"
 INVENTORY_FILE="$SCRIPT_DIR/inventory.ini"
 SSH_KEY="$SCRIPT_DIR/.ssh/id_ed25519"
 
@@ -19,14 +19,14 @@ echo "=== Installing Kubernetes Cluster ==="
 echo ""
 
 # Check prerequisites
-if [ ! -d "$KUBESPRAY_DIR" ]; then
-  echo "ERROR: Kubespray not found at $KUBESPRAY_DIR"
+if [ ! -f "$INVENTORY_FILE" ]; then
+  echo "ERROR: inventory.ini not found"
   echo "Please run ./setup-controller.sh first"
   exit 1
 fi
 
-if [ ! -f "$INVENTORY_FILE" ]; then
-  echo "ERROR: inventory.ini not found"
+if [ ! -f "$SSH_KEY" ]; then
+  echo "ERROR: SSH key not found at $SSH_KEY"
   echo "Please run ./setup-controller.sh first"
   exit 1
 fi
@@ -42,26 +42,15 @@ if [ -z "${MASTER_IP:-}" ]; then
   echo ""
 fi
 
-echo "Copying inventory to Kubespray directory..."
-cp "$INVENTORY_FILE" "$KUBESPRAY_DIR/inventory/mycluster/inventory.ini"
-
-echo "Copying custom configuration..."
-if [ -d "$SCRIPT_DIR/group_vars" ] && [ "$(ls -A $SCRIPT_DIR/group_vars 2>/dev/null)" ]; then
-  cp -r "$SCRIPT_DIR/group_vars/"* "$KUBESPRAY_DIR/inventory/mycluster/group_vars/" 2>/dev/null || true
-  echo "  ✓ Custom group_vars copied"
-else
-  echo "  No custom group_vars found (using Kubespray defaults)"
-fi
-
-cd "$KUBESPRAY_DIR"
+# Copy inventory.ini into the inventory dir (bind mounted into the container)
+cp "$INVENTORY_FILE" "$INVENTORY_DIR/inventory.ini"
 
 echo ""
 echo "=== Pre-flight checks ==="
 echo "Running Ansible ping to verify connectivity..."
 
-# Run Ansible via Docker (using official Kubespray image)
 docker run --rm -it \
-  --mount type=bind,source="$KUBESPRAY_DIR/inventory/mycluster",dst=/inventory \
+  --mount type=bind,source="$INVENTORY_DIR",dst=/inventory \
   --mount type=bind,source="$SSH_KEY",dst=/root/.ssh/id_ed25519,readonly \
   --mount type=bind,source="$SSH_KEY.pub",dst=/root/.ssh/id_ed25519.pub,readonly \
   -e ANSIBLE_HOST_KEY_CHECKING=False \
@@ -73,9 +62,8 @@ echo "=== Starting Kubernetes cluster installation ==="
 echo "This may take 15-30 minutes depending on your network and hardware..."
 echo ""
 
-# Run the kubespray playbook via Docker
 docker run --rm -it \
-  --mount type=bind,source="$KUBESPRAY_DIR/inventory/mycluster",dst=/inventory \
+  --mount type=bind,source="$INVENTORY_DIR",dst=/inventory \
   --mount type=bind,source="$SSH_KEY",dst=/root/.ssh/id_ed25519,readonly \
   --mount type=bind,source="$SSH_KEY.pub",dst=/root/.ssh/id_ed25519.pub,readonly \
   -e ANSIBLE_HOST_KEY_CHECKING=False \
@@ -90,8 +78,7 @@ echo ""
 echo "=== Kubernetes cluster installation complete! ==="
 echo ""
 
-# Download kubeconfig to local directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Download kubeconfig
 KUBECONFIG_DIR="$SCRIPT_DIR/.kube"
 KUBECONFIG_FILE="$KUBECONFIG_DIR/config"
 
@@ -99,7 +86,6 @@ if [ -n "${MASTER_IP:-}" ]; then
   echo "Downloading kubeconfig from master node..."
   mkdir -p "$KUBECONFIG_DIR"
 
-  # First, create kubeconfig on the master for ansible-agent user
   echo "  Preparing kubeconfig on master node..."
   ssh -i "$SSH_KEY" ansible-agent@$MASTER_IP << 'REMOTE_SCRIPT'
 mkdir -p ~/.kube
@@ -107,7 +93,6 @@ sudo cp /etc/kubernetes/admin.conf ~/.kube/config
 sudo chown $(id -u):$(id -g) ~/.kube/config
 REMOTE_SCRIPT
 
-  # Now download it
   echo "  Downloading kubeconfig..."
   scp -i "$SSH_KEY" ansible-agent@$MASTER_IP:~/.kube/config "$KUBECONFIG_FILE"
 

@@ -39,6 +39,9 @@ venv/
 *.swo
 *~
 
-# Kubespray (downloaded dependency - too large to commit)
+# Kubespray clone (not needed - runs via Docker image)
 kubespray/
+
+# Generated inventory files (contain environment-specific IPs)
 inventory.ini
+inventory/inventory.ini

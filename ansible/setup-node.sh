@@ -34,6 +34,21 @@ fi
 echo "Installing Python3..."
 sudo apt install -y python3
 
+echo "Configuring split-DNS (external + Kubernetes cluster domains)..."
+# The K8s installer (Kubespray) will set the host DNS to 169.254.25.10 (NodeLocal DNSCache).
+# When the cluster is degraded, that DNS stops responding and breaks OS-level resolution.
+# This drop-in makes 8.8.8.8/1.1.1.1 the global fallback for the host OS.
+# Pods are unaffected - they use their own DNS path through CoreDNS.
+sudo mkdir -p /etc/systemd/resolved.conf.d
+sudo tee /etc/systemd/resolved.conf.d/k8s-dns.conf >/dev/null <<'EOF'
+[Resolve]
+DNS=8.8.8.8 1.1.1.1
+DNSSEC=no
+Cache=no-negative
+EOF
+sudo systemctl restart systemd-resolved
+echo "  ✓ DNS configured"
+
 echo "Creating sudo user for ansible agent..."
 if id "ansible-agent" &>/dev/null; then
     echo "User ansible-agent already exists"
