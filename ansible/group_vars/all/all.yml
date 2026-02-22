@@ -1,0 +1,30 @@
+# Global variables for all hosts
+
+# Upstream DNS servers
+upstream_dns_servers:
+  - 8.8.8.8
+  - 8.8.4.4
+  - 1.1.1.1
+
+# NTP servers for time synchronization
+ntp_enabled: true
+
+# Enable/disable swap (Kubernetes requires swap to be disabled)
+# Kubespray will handle this automatically
+kubelet_fail_swap_on: true
+
+# Proxy settings (if you're behind a corporate proxy)
+# Uncomment and configure if needed
+# http_proxy: "http://proxy.example.com:8080"
+# https_proxy: "http://proxy.example.com:8080"
+# no_proxy: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+# Download settings
+download_validate_certs: true
+download_force_cache: false
+
+# System upgrade
+upgrade_system_packages: false
+
+# Disable auto-update on Ubuntu
+auto_update_enabled: false

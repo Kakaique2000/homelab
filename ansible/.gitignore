@@ -1,0 +1,40 @@
+# SSH keys
+.ssh/
+*.pem
+*.key
+id_*
+
+# Kubeconfig
+.kube/
+kubeconfig
+*.conf
+
+# Ansible generated files
+*.retry
+.ansible/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Terraform (if used later)
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Environment files
+.env
+.env.local
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~

@@ -1,0 +1,55 @@
+# Kubernetes cluster configuration
+# This file contains custom settings for your Kubernetes cluster
+# These override the default values from Kubespray
+
+# Kubernetes version to install
+kube_version: v1.28.6
+
+# Network plugin (calico, flannel, weave, cilium, canal, kube-ovn, kube-router)
+kube_network_plugin: calico
+
+# Service and pod network CIDR
+kube_service_addresses: 10.233.0.0/18
+kube_pods_subnet: 10.233.64.0/18
+
+# DNS configuration
+dns_mode: coredns
+enable_nodelocaldns: true
+
+# Container runtime (containerd or crio)
+container_manager: containerd
+
+# Enable Kubernetes dashboard
+dashboard_enabled: true
+
+# Enable metrics server
+metrics_server_enabled: true
+
+# Enable Helm
+helm_enabled: true
+
+# For single-node cluster, allow scheduling on master
+# Set to false when you have dedicated worker nodes
+kube_override_hostname: true
+
+# Download options
+download_run_once: true
+download_localhost: false
+
+# Kubelet configuration
+kubelet_max_pods: 110
+
+# Enable cert-manager (useful for managing TLS certificates)
+cert_manager_enabled: false
+
+# Enable ingress-nginx controller
+ingress_nginx_enabled: true
+ingress_nginx_host_network: true
+
+# Persistent volume settings
+# If you have local storage or NFS, configure here
+# local_path_provisioner_enabled: true
+
+# Enable kubectl on master node
+kubectl_localhost: true
+kubeconfig_localhost: false
