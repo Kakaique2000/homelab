@@ -16,6 +16,7 @@ Simple, automated Kubernetes cluster setup for your homelab using Ansible and Ku
 
 - Ubuntu/Debian machine(s) for Kubernetes nodes (2GB RAM, 2 CPU minimum)
 - Control machine with bash (WSL, Linux, or Mac)
+- **Docker** installed on control machine (for running Kubespray)
 - Network connectivity between machines
 
 ### 3-Step Installation
@@ -55,12 +56,15 @@ That's it! You now have a working Kubernetes cluster.
 - Shows available IP addresses
 
 ### `setup-controller.sh`
-**Run on**: Control machine (requires `export MASTER_IP=<ip>`)
+**Run on**: Control machine (requires `export MASTER_IP=<ip>` and Docker)
 **Does**:
-- Installs Ansible, kubectl, k9s
+- Verifies Docker is installed
+- Installs kubectl and k9s
 - Generates SSH keys and copies them to nodes
-- Downloads Kubespray
+- Downloads Kubespray and builds Docker image (contains Ansible + all dependencies)
 - Creates Ansible inventory automatically
+
+**Note**: Kubespray runs in Docker, eliminating Python dependency issues!
 
 ### `install-k8s.sh`
 **Run on**: Control machine

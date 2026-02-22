@@ -4,7 +4,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KUBESPRAY_DIR="$HOME/kubespray"
+KUBESPRAY_DIR="$SCRIPT_DIR/kubespray"  # Kubespray dentro do repositório
 INVENTORY_FILE="$SCRIPT_DIR/inventory.ini"
 SSH_KEY="$SCRIPT_DIR/.ssh/id_ed25519"
 

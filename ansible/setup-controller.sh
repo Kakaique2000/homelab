@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SSH_DIR="$SCRIPT_DIR/.ssh"
 SSH_KEY="$SSH_DIR/id_ed25519"
 INVENTORY_FILE="$SCRIPT_DIR/inventory.ini"
-KUBESPRAY_DIR="$HOME/kubespray"
+KUBESPRAY_DIR="$SCRIPT_DIR/kubespray"  # Agora fica dentro do repositório!
 KUBESPRAY_VERSION="v2.24.1"
 
 echo "=== Ansible Controller Setup ==="
@@ -34,24 +34,42 @@ echo "Master node IP: $MASTER_IP"
 echo ""
 
 # ============================================================
-# Step 1: Install Ansible and dependencies
+# Step 1: Install system dependencies
 # ============================================================
-echo "[1/5] Installing Ansible and dependencies..."
+echo "[1/5] Installing system dependencies..."
 
-if command -v ansible &> /dev/null; then
-  echo "  ✓ Ansible already installed ($(ansible --version | head -n1))"
-else
-  echo "  Installing Ansible via pipx..."
-
-  if ! command -v pipx &> /dev/null; then
-    echo "  Installing pipx first..."
-    sudo apt update
-    sudo apt install -y python3 python3-pip pipx sshpass git
-    pipx ensurepath
+# Check if Docker is installed
+if ! command -v docker &> /dev/null; then
+  echo "  ERROR: Docker is not installed"
+  echo ""
+  echo "  Kubespray will run in a Docker container to avoid Python dependency issues."
+  echo "  Please install Docker first:"
+  echo ""
+  if command -v apt-get &> /dev/null; then
+    echo "  # Install Docker on Ubuntu/Debian:"
+    echo "  curl -fsSL https://get.docker.com | sudo sh"
+    echo "  sudo usermod -aG docker \$USER"
+    echo "  newgrp docker  # Or logout and login again"
+  elif command -v brew &> /dev/null; then
+    echo "  # Install Docker on macOS:"
+    echo "  brew install --cask docker"
+  else
+    echo "  Visit: https://docs.docker.com/get-docker/"
   fi
+  echo ""
+  exit 1
+fi
 
-  pipx install ansible
-  echo "  ✓ Ansible installed"
+echo "  ✓ Docker installed: $(docker --version)"
+
+# Install basic tools (git, sshpass)
+if command -v apt-get &> /dev/null; then
+  echo "  Installing git and sshpass..."
+  sudo apt update -qq 2>/dev/null || true
+  sudo apt install -y git sshpass 2>/dev/null || true
+elif command -v brew &> /dev/null; then
+  echo "  Installing git..."
+  brew install git 2>/dev/null || true
 fi
 
 # Install kubectl if not present
@@ -166,13 +184,21 @@ if [ -d "$KUBESPRAY_DIR" ]; then
 else
   echo "  Cloning Kubespray (version $KUBESPRAY_VERSION)..."
   git clone --depth 1 --branch "$KUBESPRAY_VERSION" https://github.com/kubernetes-sigs/kubespray.git "$KUBESPRAY_DIR"
-
-  cd "$KUBESPRAY_DIR"
-  echo "  Installing Kubespray Python dependencies..."
-  pip3 install -q -r requirements.txt
-
-  echo "  ✓ Kubespray installed"
+  echo "  ✓ Kubespray cloned"
 fi
+
+cd "$KUBESPRAY_DIR"
+
+# Pull official Kubespray Docker image
+echo "  Pulling official Kubespray Docker image..."
+if docker pull "quay.io/kubespray/kubespray:$KUBESPRAY_VERSION" >/dev/null 2>&1; then
+  echo "  ✓ Docker image pulled"
+else
+  echo "  ⚠ Failed to pull image, will try again during install"
+fi
+
+cd "$SCRIPT_DIR"
+echo "  ✓ Kubespray setup complete"
 
 # Create mycluster inventory directory
 mkdir -p "$KUBESPRAY_DIR/inventory/mycluster"
@@ -191,7 +217,7 @@ cat > "$INVENTORY_FILE" << EOF
 # Generated: $(date)
 
 [all]
-k8s-master ansible_host=$MASTER_IP ansible_user=ansible-agent ansible_ssh_private_key_file=$SSH_KEY
+k8s-master ansible_host=$MASTER_IP ansible_user=ansible-agent ansible_ssh_private_key_file=/root/.ssh/id_ed25519
 
 # Master nodes (control plane)
 [kube_control_plane]
@@ -214,8 +240,8 @@ kube_node
 
 # To add worker nodes later, edit this file and add:
 # [all]
-# k8s-master ansible_host=$MASTER_IP ansible_user=ansible-agent ansible_ssh_private_key_file=$SSH_KEY
-# k8s-worker1 ansible_host=192.168.1.101 ansible_user=ansible-agent ansible_ssh_private_key_file=$SSH_KEY
+# k8s-master ansible_host=$MASTER_IP ansible_user=ansible-agent ansible_ssh_private_key_file=/root/.ssh/id_ed25519
+# k8s-worker1 ansible_host=192.168.1.101 ansible_user=ansible-agent ansible_ssh_private_key_file=/root/.ssh/id_ed25519
 #
 # [kube_node]
 # k8s-master
@@ -228,15 +254,16 @@ echo ""
 # ============================================================
 # Step 5: Test connectivity
 # ============================================================
-echo "[5/5] Testing Ansible connectivity..."
+echo "[5/5] Testing SSH connectivity..."
 
 cd "$SCRIPT_DIR"
 
-if ansible all -i "$INVENTORY_FILE" -m ping 2>&1 | grep -q "SUCCESS"; then
-  echo "  ✓ Ansible can reach all nodes"
+# Test SSH connection directly (Docker will handle Ansible)
+if ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 "${USER}@${MASTER_IP}" "echo 'SSH connection successful'" >/dev/null 2>&1; then
+  echo "  ✓ SSH connectivity verified"
 else
-  echo "  WARNING: Ansible connectivity test failed"
-  echo "  Run manually: ansible all -m ping"
+  echo "  WARNING: SSH connectivity test failed"
+  echo "  Please verify: ssh -i .ssh/id_ed25519 ansible-agent@$MASTER_IP"
 fi
 
 echo ""

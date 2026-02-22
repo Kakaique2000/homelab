@@ -16,11 +16,17 @@ sudo apt install -y openssh-server
 echo "Enabling and starting SSH service..."
 sudo systemctl enable --now ssh
 
-echo "Configuring firewall for SSH (if UFW is active)..."
+echo "Configuring firewall (if UFW is active)..."
 if sudo ufw status | grep -q "Status: active"; then
-  echo "UFW is active, allowing SSH..."
-  sudo ufw allow ssh
-  sudo ufw allow 22/tcp
+  echo "UFW is active, configuring rules..."
+  sudo ufw allow 22/tcp     # SSH
+  sudo ufw allow 6443/tcp   # Kubernetes API server
+  sudo ufw allow 2379:2380/tcp  # etcd
+  sudo ufw allow 10250/tcp  # kubelet API
+  sudo ufw allow 10251/tcp  # kube-scheduler
+  sudo ufw allow 10252/tcp  # kube-controller-manager
+  sudo ufw allow 179/tcp    # Calico BGP
+  sudo ufw allow 4789/udp   # Calico VXLAN
 else
   echo "UFW is not active, skipping firewall configuration"
 fi
@@ -30,9 +36,13 @@ sudo apt install -y python3
 
 echo "Creating sudo user for ansible agent..."
 if id "ansible-agent" &>/dev/null; then
-    echo "User ansible-agent already exists, skipping creation"
+    echo "User ansible-agent already exists"
 else
     sudo adduser --disabled-password --gecos "" ansible-agent
+    echo ""
+    echo "Setting password for ansible-agent user..."
+    echo "You will need this password for initial SSH setup"
+    sudo passwd ansible-agent
 fi
 
 echo "Adding ansible-agent to sudo group..."

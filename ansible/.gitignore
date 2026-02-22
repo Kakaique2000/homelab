@@ -38,3 +38,7 @@ venv/
 *.swp
 *.swo
 *~
+
+# Kubespray (downloaded dependency - too large to commit)
+kubespray/
+inventory.ini

@@ -10,7 +10,8 @@ if [[ "$1" == "-v" ]] || [[ "$1" == "--verbose" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KUBESPRAY_DIR="$HOME/kubespray"
+KUBESPRAY_DIR="$SCRIPT_DIR/kubespray"  # Kubespray dentro do repositório
+KUBESPRAY_VERSION="v2.24.1"
 INVENTORY_FILE="$SCRIPT_DIR/inventory.ini"
 SSH_KEY="$SCRIPT_DIR/.ssh/id_ed25519"
 
@@ -31,8 +32,13 @@ if [ ! -f "$INVENTORY_FILE" ]; then
 fi
 
 if [ -z "${MASTER_IP:-}" ]; then
-  echo "WARNING: MASTER_IP environment variable not set"
-  echo "Kubeconfig download may fail"
+  MASTER_IP=$(grep -m1 'ansible_host=' "$INVENTORY_FILE" | sed 's/.*ansible_host=\([^ ]*\).*/\1/')
+  if [ -n "$MASTER_IP" ]; then
+    echo "MASTER_IP not set, using value from inventory.ini: $MASTER_IP"
+  else
+    echo "WARNING: MASTER_IP not set and could not be read from inventory.ini"
+    echo "Kubeconfig download may fail"
+  fi
   echo ""
 fi
 
@@ -52,18 +58,33 @@ cd "$KUBESPRAY_DIR"
 echo ""
 echo "=== Pre-flight checks ==="
 echo "Running Ansible ping to verify connectivity..."
-ansible all -i inventory/mycluster/inventory.ini -m ping
+
+# Run Ansible via Docker (using official Kubespray image)
+docker run --rm -it \
+  --mount type=bind,source="$KUBESPRAY_DIR/inventory/mycluster",dst=/inventory \
+  --mount type=bind,source="$SSH_KEY",dst=/root/.ssh/id_ed25519,readonly \
+  --mount type=bind,source="$SSH_KEY.pub",dst=/root/.ssh/id_ed25519.pub,readonly \
+  -e ANSIBLE_HOST_KEY_CHECKING=False \
+  "quay.io/kubespray/kubespray:$KUBESPRAY_VERSION" \
+  ansible all -i /inventory/inventory.ini -m ping
 
 echo ""
 echo "=== Starting Kubernetes cluster installation ==="
 echo "This may take 15-30 minutes depending on your network and hardware..."
 echo ""
 
-# Run the kubespray playbook
-ansible-playbook -i inventory/mycluster/inventory.ini \
-  --become \
-  --become-user=root \
-  cluster.yml
+# Run the kubespray playbook via Docker
+docker run --rm -it \
+  --mount type=bind,source="$KUBESPRAY_DIR/inventory/mycluster",dst=/inventory \
+  --mount type=bind,source="$SSH_KEY",dst=/root/.ssh/id_ed25519,readonly \
+  --mount type=bind,source="$SSH_KEY.pub",dst=/root/.ssh/id_ed25519.pub,readonly \
+  -e ANSIBLE_HOST_KEY_CHECKING=False \
+  "quay.io/kubespray/kubespray:$KUBESPRAY_VERSION" \
+  ansible-playbook -i /inventory/inventory.ini \
+    --private-key /root/.ssh/id_ed25519 \
+    --become \
+    --become-user=root \
+    cluster.yml
 
 echo ""
 echo "=== Kubernetes cluster installation complete! ==="
@@ -89,6 +110,9 @@ REMOTE_SCRIPT
   # Now download it
   echo "  Downloading kubeconfig..."
   scp -i "$SSH_KEY" ansible-agent@$MASTER_IP:~/.kube/config "$KUBECONFIG_FILE"
+
+  # Replace loopback address with actual master IP so kubectl works from outside
+  sed -i "s|https://127.0.0.1:6443|https://$MASTER_IP:6443|g" "$KUBECONFIG_FILE"
 
   echo "  ✓ Kubeconfig downloaded to: $KUBECONFIG_FILE"
 else
