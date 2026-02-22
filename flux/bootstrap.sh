@@ -5,7 +5,7 @@
 #
 # Prerequisites:
 #   - kubectl configured and pointing to the target cluster
-#   - helm installed
+#   - curl installed (helm will be auto-installed if missing)
 #   - GITHUB_REPO set to the public repo URL
 #
 # Usage:
@@ -14,9 +14,11 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GITHUB_REPO="${GITHUB_REPO:-}"
 FLUX_PATH="flux/clusters/homelab"
 FLUX_NAMESPACE="flux-system"
+export KUBECONFIG="${KUBECONFIG:-$SCRIPT_DIR/../ansible/.kube/config}"
 
 # ============================================================
 # Validation
@@ -33,8 +35,9 @@ if ! command -v kubectl &>/dev/null; then
 fi
 
 if ! command -v helm &>/dev/null; then
-  echo "ERROR: helm not found in PATH"
-  exit 1
+  echo "helm not found — installing via get.helm.sh..."
+  curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  echo "  ✓ helm installed"
 fi
 
 if ! kubectl cluster-info &>/dev/null; then

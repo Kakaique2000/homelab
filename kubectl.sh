@@ -2,7 +2,7 @@
 # kubectl wrapper using local kubeconfig
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KUBECONFIG_FILE="$SCRIPT_DIR/.kube/config"
+KUBECONFIG_FILE="$SCRIPT_DIR/ansible/.kube/config"
 
 if [ ! -f "$KUBECONFIG_FILE" ]; then
   echo "ERROR: Kubeconfig not found at $KUBECONFIG_FILE"
