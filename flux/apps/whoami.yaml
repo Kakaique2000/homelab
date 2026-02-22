@@ -46,7 +46,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: vps64610.publiccloud.com.br
+    - host: whoami.kaique.cloud
       http:
         paths:
           - path: /

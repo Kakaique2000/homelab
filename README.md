@@ -200,11 +200,33 @@ export VPS_USER=ubuntu   # default: ubuntu
 ./edge/add-port.sh 19132 udp   # Minecraft Bedrock
 ```
 
+### TLS (HTTPS)
+
+Wildcard certificate via Let's Encrypt + Route53. Covers `*.domain.com` and `domain.com` — no per-subdomain setup needed.
+
+```bash
+export DOMAINS="example.com another.com"
+export AWS_ACCESS_KEY_ID=AKIA...
+export AWS_SECRET_ACCESS_KEY=...
+./edge/setup-tls.sh
+```
+
+- Re-running with all domains is safe — certbot skips already-valid certs
+- Requires an IAM user with Route53 permissions only (`ListHostedZones`, `GetChange`, `ChangeResourceRecordSets`)
+- Auto-renewal configured via `certbot.timer`
+
+DNS records to create (once per domain):
+```
+*.example.com  A  <VPS IP>
+example.com    A  <VPS IP>
+```
+
 ### Scripts
 
 | Script | Purpose |
 |---|---|
 | `setup-vps.sh` | One-time VPS provisioning |
+| `setup-tls.sh` | Issue wildcard TLS certs and configure nginx HTTPS |
 | `register-node.sh` | Add a node to WireGuard and nginx upstreams |
 | `remove-node.sh` | Remove a node from WireGuard and nginx |
 | `add-port.sh` | Expose a TCP/UDP port on the VPS |
