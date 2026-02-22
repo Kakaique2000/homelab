@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minecraft
+  labels:
+    goldilocks.fairwinds.com/enabled: "true"
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: minecraft-server-charts
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://itzg.github.io/minecraft-server-charts/
+---
+# mc-router: lê o handshake do protocolo Minecraft e roteia pelo hostname.
+# Só minecraft.kaique.cloud chega no servidor — qualquer outro hostname é dropado.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mc-router
+  namespace: minecraft
+spec:
+  interval: 1h
+  dependsOn:
+    - name: local-path-provisioner
+      namespace: local-path-provisioner
+  chart:
+    spec:
+      chart: mc-router
+      version: "1.x"
+      sourceRef:
+        kind: HelmRepository
+        name: minecraft-server-charts
+        namespace: flux-system
+      interval: 24h
+  values:
+    # Descobre serviços automaticamente via anotação mc-router.itzg.me/externalServerName
+    minecraftRouter:
+      inKubeCluster: true
+
+    service:
+      # NodePort exposto ao VPS edge na porta 25565
+      type: NodePort
+      port: 25565
+      nodePort: 25565
+---
+# Servidor Minecraft com ClusterIP — só acessível internamente via mc-router
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: minecraft
+  namespace: minecraft
+spec:
+  interval: 1h
+  dependsOn:
+    - name: local-path-provisioner
+      namespace: local-path-provisioner
+    - name: mc-router
+  chart:
+    spec:
+      chart: minecraft
+      version: "5.x"
+      sourceRef:
+        kind: HelmRepository
+        name: minecraft-server-charts
+        namespace: flux-system
+      interval: 24h
+  values:
+    replicaCount: 1
+
+    image:
+      repository: itzg/minecraft-server
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    minecraftServer:
+      eula: "TRUE"
+      version: "LATEST"
+      type: VANILLA
+      difficulty: easy
+      gameMode: survival
+      maxPlayers: 20
+      motd: "Minecraft - Homelab"
+      onlineMode: true
+      memory: 2048M
+      jvmOpts: ""
+      jvmXXOpts: ""
+
+    resources:
+      requests:
+        memory: 2Gi
+        cpu: 500m
+      limits:
+        memory: 3Gi
+        cpu: 2000m
+
+    persistence:
+      dataDir:
+        enabled: true
+        storageClass: local-path
+        accessMode: ReadWriteOnce
+        size: 10Gi
+
+    service:
+      # ClusterIP: não exposto diretamente, só acessível pelo mc-router
+      type: ClusterIP
+      port: 25565
+      rcon:
+        enabled: false
+
+    # Anotação que o mc-router usa para descobrir este serviço
+    # Apenas minecraft.kaique.cloud será roteado aqui
+    serviceAnnotations:
+      mc-router.itzg.me/externalServerName: "minecraft.kaique.cloud"

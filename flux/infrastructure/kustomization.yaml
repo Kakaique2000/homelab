@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - ingress-nginx-lease-rbac.yaml
   - goldilocks.yaml
+  - local-path-provisioner.yaml
