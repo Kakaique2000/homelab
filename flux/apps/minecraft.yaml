@@ -36,9 +36,11 @@ spec:
         namespace: flux-system
       interval: 24h
   values:
-    # Descobre serviços automaticamente via anotação mc-router.itzg.me/externalServerName
     minecraftRouter:
-      inKubeCluster: true
+      mappings:
+        - externalHostname: "minecraft.kaique.cloud"
+          host: "minecraft"
+          port: 25565
 
     service:
       # NodePort exposto ao VPS edge na porta 25565
