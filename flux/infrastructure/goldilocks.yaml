@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: goldilocks
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: fairwinds
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://charts.fairwinds.com/stable
+---
+# VPA (Vertical Pod Autoscaler) — required by Goldilocks
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: vpa
+  namespace: goldilocks
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: vpa
+      version: "4.x"
+      sourceRef:
+        kind: HelmRepository
+        name: fairwinds
+        namespace: flux-system
+      interval: 24h
+  values:
+    recommender:
+      enabled: true
+    updater:
+      enabled: false
+    admissionController:
+      enabled: false
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: goldilocks
+  namespace: goldilocks
+spec:
+  interval: 1h
+  dependsOn:
+    - name: vpa
+  chart:
+    spec:
+      chart: goldilocks
+      version: "9.x"
+      sourceRef:
+        kind: HelmRepository
+        name: fairwinds
+        namespace: flux-system
+      interval: 24h
+  values:
+    dashboard:
+      enabled: true
+      replicaCount: 1
