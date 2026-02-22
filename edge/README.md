@@ -1,28 +1,28 @@
-# Edge — Proxy Reverso com WireGuard
+# Edge — WireGuard Reverse Proxy
 
-Gerencia um VPS que serve como ponto de entrada público para o cluster Kubernetes local. Resolve o problema de CGNAT e IPs rotativos criando um túnel WireGuard entre o VPS e os nós do cluster, com nginx fazendo o proxy do tráfego.
+Manages a VPS that serves as a public entrypoint for a local Kubernetes cluster. Solves the CGNAT / rotating IP problem by creating a WireGuard tunnel between the VPS and the cluster nodes, with nginx proxying incoming traffic.
 
-> Este diretório é independente de `../ansible/`. O cluster funciona sem o edge. O edge pode ser configurado ou removido sem alterar nada no cluster.
+> This directory is independent of `../ansible/`. The cluster works without the edge. The edge can be set up or removed without changing anything in the cluster.
 
 ---
 
-## Arquitetura
+## Architecture
 
 ```
 Internet
     │
     │  HTTP :80/:443
-    │  TCP qualquer porta (Minecraft, etc)
+    │  TCP any port (Minecraft, game servers, etc)
     ▼
 ┌─────────────────────────┐
-│         VPS             │   IP público fixo
-│  nginx  (proxy HTTP)    │
-│  nginx  (proxy TCP/UDP) │
+│         VPS             │   fixed public IP
+│  nginx  (HTTP proxy)    │
+│  nginx  (TCP/UDP stream)│
 │  WireGuard :51820       │
 │  wg0: 10.8.0.1          │
 └──────────┬──────────────┘
-           │  Túnel WireGuard (10.8.0.0/24)
-           │  PersistentKeepalive — sobrevive CGNAT
+           │  WireGuard tunnel (10.8.0.0/24)
+           │  PersistentKeepalive — survives CGNAT
     ┌──────┴──────┐
     │             │
     ▼             ▼
@@ -32,78 +32,78 @@ k8s-master   k8s-worker1
  ingress       ingress
 ```
 
-**Fluxo HTTP:**
-`cliente → VPS:80 → nginx upstream → 10.8.0.X:80 → ingress-nginx → pod`
+**HTTP flow:**
+`client → VPS:80 → nginx upstream → 10.8.0.X:80 → ingress-nginx → pod`
 
-**Fluxo TCP (ex: Minecraft):**
-`cliente → VPS:25565 → nginx stream → 10.8.0.X:25565 → NodePort K8s → pod`
+**TCP flow (e.g. Minecraft):**
+`client → VPS:25565 → nginx stream → 10.8.0.X:25565 → K8s NodePort → pod`
 
-**WireGuard — topologia hub-and-spoke:**
-- VPS é o hub (`10.8.0.1`)
-- Cada nó K8s é um spoke (`10.8.0.2`, `.3`, ...)
-- Nós fazem `PersistentKeepalive = 25s` para manter o túnel vivo mesmo com CGNAT
-- Split-tunnel: só `10.8.0.0/24` passa pelo túnel, o resto vai direto pela rede do nó
-
----
-
-## Pré-requisitos
-
-- VPS com Ubuntu (testado em 22.04/24.04)
-- Acesso SSH ao VPS com senha (para a primeira cópia de chave)
-- Cluster K8s configurado via `../ansible/` com ingress-nginx ativo
-- SSH key gerada em `../ansible/.ssh/id_ed25519`
+**WireGuard — hub-and-spoke topology:**
+- VPS is the hub (`10.8.0.1`)
+- Each K8s node is a spoke (`10.8.0.2`, `.3`, ...)
+- Nodes use `PersistentKeepalive = 25s` to keep the tunnel alive through CGNAT
+- Split-tunnel: only `10.8.0.0/24` goes through the tunnel, all other traffic uses the node's normal interface
 
 ---
 
-## Setup inicial do VPS (uma vez)
+## Prerequisites
+
+- VPS running Ubuntu (tested on 22.04/24.04)
+- SSH access to the VPS with a password (for the initial key copy)
+- K8s cluster set up via `../ansible/` with ingress-nginx enabled
+- SSH key generated at `../ansible/.ssh/id_ed25519`
+
+---
+
+## Initial VPS setup (once)
 
 ```bash
 cd homelab/edge/
 
 export VPS_IP=1.2.3.4
-export VPS_USER=ubuntu    # padrão: ubuntu
+export VPS_USER=ubuntu    # default: ubuntu
 
 ./setup-vps.sh
 ```
 
-O script:
-1. Copia a chave SSH do ansible para o VPS (pede senha uma vez)
-2. Instala `wireguard-tools` e `nginx`
-3. Gera keypair WireGuard no VPS e configura `wg0` (`10.8.0.1/24`)
-4. Configura nginx com proxy HTTP e suporte a stream TCP/UDP
-5. Instala o script `/usr/local/sbin/regen-nginx-upstream.sh` no VPS
-6. Salva localmente `.vps-ip`, `.vps-user` e `.vps-wg-public.key` (gitignored)
+The script:
+1. Copies the ansible SSH key to the VPS (prompts for password once)
+2. Installs `wireguard-tools` and `nginx`
+3. Generates a WireGuard keypair on the VPS and configures `wg0` (`10.8.0.1/24`)
+4. Configures nginx with HTTP proxy and TCP/UDP stream support
+5. Installs `/usr/local/sbin/regen-nginx-upstream.sh` on the VPS
+6. Saves `.vps-ip`, `.vps-user`, and `.vps-wg-public.key` locally (gitignored)
 
 ---
 
-## Registrar um nó no edge
+## Registering a node
 
-Rode após `../ansible/install-k8s.sh` (master) ou `../ansible/add-worker.sh` (worker):
+Run after `../ansible/install-k8s.sh` (master) or `../ansible/add-worker.sh` (worker):
 
 ```bash
-# Master (WG IP atribuído automaticamente: 10.8.0.2)
+# Master (WG IP auto-assigned: 10.8.0.2)
 ./register-node.sh k8s-master 192.168.15.13
 
-# Worker (WG IP atribuído automaticamente: 10.8.0.3, .4, ...)
+# Worker (WG IP auto-assigned: 10.8.0.3, .4, ...)
 ./register-node.sh k8s-worker1 192.168.15.20
 
-# Com WG IP explícito
+# With explicit WG IP
 ./register-node.sh k8s-master 192.168.15.13 10.8.0.2
 ```
 
-O script:
-1. Instala WireGuard no nó
-2. Gera keypair no nó
-3. Configura o túnel no nó (aponta para o VPS)
-4. Registra o nó como peer no VPS (`wg addconf` — sem restart)
-5. Regenera upstreams do nginx (HTTP + todas as portas TCP/UDP)
-6. Verifica conectividade com `ping`
+The script:
+1. Installs WireGuard on the node
+2. Generates a keypair on the node
+3. Configures the tunnel on the node (pointing to the VPS)
+4. Registers the node as a peer on the VPS (`wg addconf` — no restart needed)
+5. Regenerates nginx upstreams (HTTP + all TCP/UDP ports)
+6. Verifies connectivity with `ping`
 
 ---
 
-## Expor porta TCP/UDP extra
+## Exposing extra TCP/UDP ports
 
-Para serviços que não são HTTP (Minecraft, servidores de jogo, etc):
+For non-HTTP services (Minecraft, game servers, etc):
 
 ```bash
 ./add-port.sh 25565 tcp   # Minecraft Java
@@ -111,86 +111,86 @@ Para serviços que não são HTTP (Minecraft, servidores de jogo, etc):
 ./add-port.sh 27015 udp   # Steam
 ```
 
-O tráfego é balanceado entre todos os nós registrados. Certifique-se de que o serviço K8s usa `NodePort` na mesma porta.
+Traffic is load-balanced across all registered nodes. Make sure your K8s service uses `NodePort` on the same port.
 
 ---
 
-## Remover um nó
+## Removing a node
 
 ```bash
-# Remove do VPS apenas
+# Remove from VPS only
 ./remove-node.sh k8s-worker1
 
-# Remove do VPS e também limpa o nó
+# Remove from VPS and clean up the node
 ./remove-node.sh k8s-worker1 192.168.15.20
 ```
 
 ---
 
-## Workflow completo
+## Full workflow
 
 ```
-1. Setup VPS (uma vez)
+1. Set up the VPS (once)
    export VPS_IP=1.2.3.4 && ./setup-vps.sh
 
-2. Instalar cluster K8s
+2. Install the K8s cluster
    cd ../ansible/ && ./install-k8s.sh
 
-3. Registrar master no edge
+3. Register master on the edge
    cd ../edge/ && ./register-node.sh k8s-master 192.168.15.13
 
-4. (Opcional) Adicionar worker
+4. (Optional) Add a worker
    cd ../ansible/ && ./add-worker.sh k8s-worker1 192.168.15.20
    cd ../edge/   && ./register-node.sh k8s-worker1 192.168.15.20
 
-5. (Opcional) Expor portas extras
+5. (Optional) Expose extra ports
    ./add-port.sh 25565 tcp
 ```
 
 ---
 
-## Arquivos
+## Files
 
-| Arquivo | Descrição |
+| File | Description |
 |---|---|
-| `setup-vps.sh` | Provisionamento inicial do VPS |
-| `register-node.sh` | Registra nó no WireGuard e nginx |
-| `remove-node.sh` | Remove nó do WireGuard e nginx |
-| `add-port.sh` | Expõe porta TCP/UDP no VPS |
-| `.vps-ip` | IP do VPS (gerado, gitignored) |
-| `.vps-user` | Usuário SSH do VPS (gerado, gitignored) |
-| `.vps-wg-public.key` | Chave pública WireGuard do VPS (gerado, gitignored) |
+| `setup-vps.sh` | One-time VPS provisioning |
+| `register-node.sh` | Registers a node in WireGuard and nginx |
+| `remove-node.sh` | Removes a node from WireGuard and nginx |
+| `add-port.sh` | Exposes a TCP/UDP port on the VPS |
+| `.vps-ip` | VPS IP address (generated, gitignored) |
+| `.vps-user` | VPS SSH user (generated, gitignored) |
+| `.vps-wg-public.key` | VPS WireGuard public key (generated, gitignored) |
 
 ---
 
-## Como o nginx é atualizado automaticamente
+## How nginx is updated automatically
 
-O VPS tem um script `/usr/local/sbin/regen-nginx-upstream.sh` que:
-- Lê todos os arquivos em `/etc/wireguard/peers/*.conf`
-- Extrai os IPs WireGuard de cada nó
-- Regenera `/etc/nginx/conf.d/k8s-upstream.conf` (upstream HTTP)
-- Regenera todos os arquivos em `/etc/nginx/stream.conf.d/ports/` (upstreams TCP/UDP)
-- Faz `nginx reload`
+The VPS has a script at `/usr/local/sbin/regen-nginx-upstream.sh` that:
+- Reads all files in `/etc/wireguard/peers/*.conf`
+- Extracts the WireGuard IP of each node
+- Regenerates `/etc/nginx/conf.d/k8s-upstream.conf` (HTTP upstream)
+- Regenerates all files in `/etc/nginx/stream.conf.d/ports/` (TCP/UDP upstreams)
+- Runs `nginx reload`
 
-É chamado automaticamente por `register-node.sh` e `remove-node.sh`. Nunca precisa ser rodado manualmente.
+It is called automatically by `register-node.sh` and `remove-node.sh`. You never need to run it manually.
 
 ---
 
-## Verificação
+## Verification
 
 ```bash
-# Testar proxy HTTP
-curl -H "Host: meuapp.com" http://<VPS_IP>/
+# Test HTTP proxy
+curl -H "Host: myapp.com" http://<VPS_IP>/
 
-# Testar porta TCP
+# Test TCP port
 nc -zv <VPS_IP> 25565
 
-# Ver estado do WireGuard no VPS
+# Check WireGuard status on VPS
 ssh ubuntu@<VPS_IP> "sudo wg show"
 
-# Ver nós registrados
+# List registered nodes
 ssh ubuntu@<VPS_IP> "ls /etc/wireguard/peers/"
 
-# Ver upstreams nginx
+# Check nginx upstreams
 ssh ubuntu@<VPS_IP> "cat /etc/nginx/conf.d/k8s-upstream.conf"
 ```
