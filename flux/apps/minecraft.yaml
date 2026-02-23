@@ -85,7 +85,7 @@ spec:
       gameMode: survival
       maxPlayers: 20
       motd: "Minecraft - Homelab"
-      onlineMode: true
+      onlineMode: false
       memory: 3072M
       viewDistance: 6
       jvmOpts: ""
