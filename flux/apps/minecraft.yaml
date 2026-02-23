@@ -37,11 +37,8 @@ spec:
       interval: 24h
   values:
     minecraftRouter:
-      mappings:
-        - externalHostname: "minecraft.kaique.cloud"
-          host: "minecraft"
-          port: 25565
-
+      debug:
+        enabled: true
     services:
       minecraft:
         type: NodePort
