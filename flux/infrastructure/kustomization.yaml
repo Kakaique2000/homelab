@@ -4,3 +4,4 @@ resources:
   - ingress-nginx-lease-rbac.yaml
   - goldilocks.yaml
   - local-path-provisioner.yaml
+  - cert-manager.yaml

@@ -43,8 +43,14 @@ kind: Ingress
 metadata:
   name: whoami
   namespace: hypeit-internal
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - whoami.kaique.cloud
+      secretName: whoami-tls
   rules:
     - host: whoami.kaique.cloud
       http:

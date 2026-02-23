@@ -1,0 +1,28 @@
+# Secret with Route53 IAM credentials.
+# Create this manually on the cluster (not committed to git):
+#
+#   kubectl create secret generic route53-credentials \
+#     --namespace cert-manager \
+#     --from-literal=access-key-id=<YOUR_AWS_ACCESS_KEY_ID> \
+#     --from-literal=secret-access-key=<YOUR_AWS_SECRET_ACCESS_KEY>
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: kaique@kaique.cloud
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - dns01:
+          route53:
+            region: sa-east-1
+            accessKeyIDSecretRef:
+              name: route53-credentials
+              key: access-key-id
+            secretAccessKeySecretRef:
+              name: route53-credentials
+              key: secret-access-key

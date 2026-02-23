@@ -1,2 +1,5 @@
 .ssh/
 .vps-*
+
+# SOPS plaintext secrets (encrypted *.secret.yaml files ARE committed)
+*.secret.plain.yaml
