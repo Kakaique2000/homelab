@@ -90,6 +90,11 @@ spec:
       viewDistance: 6
       jvmOpts: ""
       jvmXXOpts: "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1"
+      serviceType: NodePort
+      nodePort: 30065
+      servicePort: 25565
+      rcon:
+        enabled: false
 
     resources:
       requests:
@@ -105,14 +110,6 @@ spec:
         storageClass: local-path
         accessMode: ReadWriteOnce
         size: 10Gi
-
-    service:
-      # NodePort: acessível diretamente via node:30065 além do mc-router
-      type: NodePort
-      port: 25565
-      nodePort: 30065
-      rcon:
-        enabled: false
 
     # Anotação que o mc-router usa para descobrir este serviço
     # Apenas minecraft.kaique.cloud será roteado aqui
