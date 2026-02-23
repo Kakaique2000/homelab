@@ -5,3 +5,4 @@ resources:
   - goldilocks.yaml
   - local-path-provisioner.yaml
   - cert-manager.yaml
+  - metrics-server.yaml
