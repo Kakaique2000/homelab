@@ -265,14 +265,17 @@ kubectl create secret generic sops-age \
 
 ### Bootstrap
 
-O Flux foi inicializado com:
+O Flux é inicializado via Flux Operator (Helm), não pelo comando `flux bootstrap`. O operator gerencia o ciclo de vida do Flux através de um CRD `FluxInstance` — sem arquivos `gotk-*.yaml` commitados no repositório.
+
 ```bash
-flux bootstrap github \
-  --owner=<github-user> \
-  --repository=homelab \
-  --branch=main \
-  --path=flux/clusters/homelab
+export GITHUB_REPO=https://github.com/seu-usuario/homelab
+./flux/bootstrap.sh
 ```
+
+O script:
+1. Instala o Flux Operator via Helm
+2. Aplica um `FluxInstance` apontando para este repositório
+3. Aguarda o Flux ficar pronto
 
 Após o bootstrap, todas as mudanças são aplicadas automaticamente via GitOps. Para forçar uma reconciliação:
 ```bash
