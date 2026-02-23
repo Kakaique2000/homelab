@@ -1,6 +1,6 @@
 # Homelab
 
-Homelab Kubernetes self-hosted com provisionamento automatizado de cluster, edge público via WireGuard e gerenciamento de workloads GitOps com Flux.
+Homelab Kubernetes self-hosted com provisionamento automatizado de cluster, edge público via WireGuard e gerenciamento de workloads GitOps com Flux CD.
 
 ---
 
@@ -9,7 +9,7 @@ Homelab Kubernetes self-hosted com provisionamento automatizado de cluster, edge
 ```
 homelab/
 ├── ansible/    # Provisionamento do cluster Kubernetes (Kubespray)
-├── edge/       # Proxy reverso no VPS (WireGuard + nginx)
+├── edge/       # Ponto de entrada público no VPS (WireGuard + iptables DNAT)
 └── flux/       # Gerenciamento GitOps de workloads (Flux CD)
 ```
 
@@ -19,22 +19,24 @@ homelab/
 Internet
     │
     ▼
-┌──────────────────────────┐
-│  VPS (edge/)             │  IP público fixo
-│  nginx + WireGuard hub   │
-└──────────┬───────────────┘
-           │ Túnel WireGuard (10.8.0.0/24)
-    ┌──────┴──────┐
-    ▼             ▼
-k8s-master    k8s-worker1    ← provisionados pelo ansible/
-  ingress-nginx                ← workloads gerenciados pelo flux/
+┌──────────────────────────────┐
+│  VPS (edge/)                 │  IP público fixo
+│  iptables DNAT               │  :80, :443, :25565 → nós k8s
+│  WireGuard hub (10.8.0.1)   │
+└──────────────┬───────────────┘
+               │ Túnel WireGuard (10.8.0.0/24)
+               ▼
+          k8s-master (10.8.0.2)   ← provisionado pelo ansible/
+            ingress-nginx          ← workloads gerenciados pelo flux/
 ```
+
+Fluxo de tráfego: `Internet → VPS (iptables DNAT) → túnel WireGuard → K8s NodePort → ingress-nginx → pod`
 
 ---
 
 ## ansible/ — Cluster Kubernetes
 
-Instalação simples e automatizada de cluster Kubernetes usando Ansible e Kubespray.
+Instalação automatizada de cluster Kubernetes usando Ansible e Kubespray.
 
 ### Pré-requisitos
 
@@ -42,12 +44,12 @@ Instalação simples e automatizada de cluster Kubernetes usando Ansible e Kubes
 - Máquina de controle com Bash (WSL, Linux ou Mac) e **Docker**
 - Conectividade de rede entre as máquinas
 
-### Instalação em 3 passos
+### Instalação
 
 ```bash
 # === Passo 1: No futuro nó K8s ===
 ./ansible/setup-node.sh
-# Exibe: Machine IPs: 192.168.1.100
+# Exibe o IP do nó: 192.168.1.100
 
 # === Passo 2: Na máquina de controle ===
 export MASTER_IP=192.168.1.100
@@ -57,7 +59,6 @@ export MASTER_IP=192.168.1.100
 
 # === Passo 3: Instalar Kubernetes ===
 ./ansible/install-k8s.sh
-# Leva 15-30 minutos
 # Baixa o kubeconfig para ansible/.kube/config
 
 # === Usar o cluster ===
@@ -90,24 +91,10 @@ MASTER_IP=$WORKER_IP ./ansible/setup-controller.sh
 
 ### O que é instalado
 
-- Kubernetes v1.28.6
+- Kubernetes (versão estável mais recente via Kubespray)
 - Rede Calico (Pod: `10.233.64.0/18`, Service: `10.233.0.0/18`)
 - CoreDNS, Containerd
-- Kubernetes Dashboard, Metrics Server
 - Ingress-NGINX Controller
-
-### Configuração
-
-Editar antes de rodar `install-k8s.sh`:
-
-**`ansible/group_vars/k8s_cluster/k8s-cluster.yml`**
-```yaml
-kube_version: v1.28.6
-kube_network_plugin: calico
-dashboard_enabled: true
-metrics_server_enabled: true
-ingress_nginx_enabled: true
-```
 
 ### Usando o cluster
 
@@ -117,7 +104,7 @@ ingress_nginx_enabled: true
 ./k9s.sh
 ```
 
-Ou exportar o kubeconfig:
+Ou exportar o kubeconfig diretamente:
 ```bash
 export KUBECONFIG=$PWD/ansible/.kube/config
 kubectl get nodes
@@ -139,9 +126,9 @@ sudo journalctl -u kubelet -f
 
 ---
 
-## edge/ — Proxy Reverso WireGuard
+## edge/ — WireGuard + iptables Edge
 
-Gerencia um VPS como ponto de entrada público para o cluster local. Resolve o problema de CGNAT e IP rotativo criando um túnel WireGuard entre o VPS e os nós do cluster, com nginx fazendo o proxy do tráfego.
+Gerencia um VPS como ponto de entrada público para o cluster local. Resolve o problema de CGNAT e IP rotativo criando um túnel WireGuard entre o VPS e os nós do cluster. O tráfego é encaminhado via **iptables DNAT** para o NodePort apropriado no K8s.
 
 > `edge/` é independente do `ansible/`. O cluster funciona sem o edge, e o edge pode ser configurado ou removido sem alterar nada no cluster.
 
@@ -149,102 +136,86 @@ Gerencia um VPS como ponto de entrada público para o cluster local. Resolve o p
 
 ```
 Internet
-    │  HTTP :80/:443
-    │  TCP qualquer porta (Minecraft, servidores de jogo, etc)
+    │  :80, :443, :25565, ...
     ▼
-┌─────────────────────────┐
-│  VPS                    │  IP público fixo
-│  nginx (proxy HTTP)     │
-│  nginx (stream TCP/UDP) │
-│  WireGuard :51820       │
-│  wg0: 10.8.0.1          │
-└──────────┬──────────────┘
-           │ Túnel WireGuard (10.8.0.0/24)
-    ┌──────┴──────┐
-    ▼             ▼
-10.8.0.2      10.8.0.3
-k8s-master   k8s-worker1
-  ingress       ingress
+┌─────────────────────────────┐
+│  VPS                        │  IP público fixo
+│  iptables DNAT + MASQUERADE │
+│  WireGuard :51820           │
+│  wg0: 10.8.0.1              │
+└──────────────┬──────────────┘
+               │ Túnel WireGuard (10.8.0.0/24)
+               ▼
+          10.8.0.2 (k8s-master)
+            NodePort → ingress-nginx → pod
 ```
 
-- **HTTP:** `cliente → VPS:80 → nginx → 10.8.0.X:80 → ingress-nginx → pod`
-- **TCP:** `cliente → VPS:25565 → nginx stream → 10.8.0.X:25565 → NodePort → pod`
+- **Todos os protocolos:** `cliente → VPS:porta → iptables DNAT → node_wg_ip:node_port → K8s NodePort`
+- **Caminho de retorno:** MASQUERADE garante que o tráfego de volta passe pelo VPS
 - **Topologia:** hub-and-spoke — VPS é o hub, cada nó é um spoke com `PersistentKeepalive = 25s`
+- **Roteamento nos nós:** `AllowedIPs = 10.8.0.1/32` (apenas tráfego do VPS pelo túnel)
 
 ### Pré-requisitos
 
 - VPS com Ubuntu 22.04/24.04
-- Acesso SSH ao VPS com senha (para a cópia inicial da chave)
-- Cluster K8s provisionado via `ansible/` com ingress-nginx ativo
+- Acesso SSH ao VPS
+- Cluster K8s provisionado via `ansible/`
 
-### Workflow completo
+### Workflow
 
 ```bash
-# 1. Configurar o VPS (uma vez)
+# 1. Configurar o hub WireGuard no VPS (uma vez)
 export VPS_IP=1.2.3.4
-export VPS_USER=ubuntu   # padrão: ubuntu
-./edge/setup-vps.sh
+./edge/setup-edge.sh
 
-# 2. Instalar o cluster K8s
-./ansible/install-k8s.sh
+# 2. Registrar um nó K8s no túnel WireGuard
+./edge/register-node.sh k8s-master 192.168.15.13 10.8.0.2
 
-# 3. Registrar o master no edge
-./edge/register-node.sh k8s-master 192.168.15.13
+# 3. Editar edge.conf com o nó e as portas expostas
+#    NODES=("k8s-master:10.8.0.2")
+#    PORTS=("443:443:tcp" "80:80:tcp" "25565:30565:tcp")
 
-# 4. (Opcional) Adicionar worker
-./ansible/add-worker.sh k8s-worker1 192.168.15.20
-./edge/register-node.sh k8s-worker1 192.168.15.20
-
-# 5. (Opcional) Expor portas TCP/UDP extras
-./edge/add-port.sh 25565 tcp   # Minecraft Java
-./edge/add-port.sh 19132 udp   # Minecraft Bedrock
+# 4. Aplicar as regras iptables no VPS
+./edge/deploy.sh
 ```
 
-### TLS (HTTPS)
-
-Certificado wildcard via Let's Encrypt + Route53. Cobre `*.dominio.com` e `dominio.com` — sem configuração por subdomínio.
+### Configuração (`edge/edge.conf`)
 
 ```bash
-export DOMAINS="exemplo.com outro.com"
-export AWS_ACCESS_KEY_ID=AKIA...
-export AWS_SECRET_ACCESS_KEY=...
-./edge/setup-tls.sh
-```
+WG_VPS_IP=10.8.0.1      # IP WireGuard do VPS
+WG_PORT=51820            # Porta de escuta WireGuard
 
-- Rodar novamente com todos os domínios é seguro — o certbot pula certs ainda válidos
-- Requer um usuário IAM com permissões apenas no Route53 (`ListHostedZones`, `GetChange`, `ChangeResourceRecordSets`)
-- Renovação automática configurada via `certbot.timer`
+NODES=(
+  "k8s-master:10.8.0.2" # nome:wg_ip
+)
 
-Registros DNS a criar (uma vez por domínio):
-```
-*.exemplo.com  A  <IP do VPS>
-exemplo.com    A  <IP do VPS>
+PORTS=(
+  "443:443:tcp"          # vps_port:node_port:proto
+  "80:80:tcp"
+  "25565:30565:tcp"      # Minecraft Java
+)
 ```
 
 ### Scripts
 
 | Script | Função |
 |---|---|
-| `setup-vps.sh` | Provisionamento inicial do VPS |
-| `setup-tls.sh` | Emite certificados wildcard TLS e configura nginx com HTTPS |
-| `register-node.sh` | Registra nó no WireGuard e upstreams nginx |
-| `remove-node.sh` | Remove nó do WireGuard e nginx |
-| `add-port.sh` | Expõe porta TCP/UDP no VPS |
+| `setup-edge.sh` | Provisionamento inicial do VPS: instala WireGuard, ativa IP forwarding, gera chaves, executa `deploy.sh` |
+| `register-node.sh` | Instala WireGuard no nó K8s, gera keypair, cria o túnel, registra como peer no VPS |
+| `deploy.sh` | Idempotente: sincroniza `edge.conf` no VPS e aplica as regras iptables DNAT |
+| `show-rules.sh` | Exibe as regras iptables gerenciadas pelo edge |
 
 ### Verificação
 
 ```bash
-# Testar proxy HTTP
-curl -H "Host: meuapp.com" http://<VPS_IP>/
+# Ver peers WireGuard no VPS
+ssh root@<VPS_IP> "sudo wg show"
 
-# Testar porta TCP
+# Ver regras iptables DNAT
+./edge/show-rules.sh
+
+# Testar porta
 nc -zv <VPS_IP> 25565
-
-# Ver estado do WireGuard
-ssh ubuntu@<VPS_IP> "sudo wg show"
-
-# Listar nós registrados
-ssh ubuntu@<VPS_IP> "ls /etc/wireguard/peers/"
 ```
 
 ---
@@ -253,38 +224,94 @@ ssh ubuntu@<VPS_IP> "ls /etc/wireguard/peers/"
 
 Gerencia todos os workloads Kubernetes via Flux CD. O cluster reconcilia automaticamente a partir deste repositório.
 
-### Bootstrap
-
-```bash
-./flux/bootstrap.sh
-```
-
 ### Estrutura
 
 ```
 flux/
-├── bootstrap.sh
-├── clusters/       # Entrypoints do Flux por cluster
-├── infrastructure/ # Infraestrutura base (cert-manager, ingress, etc)
-└── apps/           # Workloads de aplicações
+├── clusters/homelab/             # Entrypoints do Flux (Kustomizations)
+│   ├── kustomization.yaml        # Raiz kustomize (lida pelo flux-system)
+│   ├── infrastructure.yaml       # Kustomization: camada de infraestrutura
+│   ├── cert-manager-issuer.yaml  # Kustomization: issuers TLS (secret criptografado com SOPS)
+│   └── apps.yaml                 # Kustomization: aplicações
+├── infrastructure/               # HelmReleases de infraestrutura base
+│   ├── cert-manager.yaml
+│   ├── goldilocks.yaml
+│   ├── local-path-provisioner.yaml
+│   ├── ingress-nginx-lease-rbac.yaml
+│   └── cert-manager-issuer/
+│       ├── issuer.yaml
+│       └── route53-creds.secret.yaml  # Criptografado com SOPS
+└── apps/
+    ├── whoami.yaml
+    └── minecraft.yaml
 ```
+
+### Cadeia de dependências
+
+```
+infrastructure → cert-manager-issuer → apps
+```
+
+### Secrets (SOPS + Age)
+
+Arquivos sensíveis (ex: `route53-creds.secret.yaml`) são criptografados com [SOPS](https://github.com/getsops/sops) usando uma chave Age. O Flux os descriptografa automaticamente via o secret `sops-age` no namespace `flux-system`.
+
+Para configurar a chave Age no cluster:
+```bash
+kubectl create secret generic sops-age \
+  --namespace=flux-system \
+  --from-file=age.agekey=<caminho-para-chave-age>
+```
+
+### Bootstrap
+
+O Flux foi inicializado com:
+```bash
+flux bootstrap github \
+  --owner=<github-user> \
+  --repository=homelab \
+  --branch=main \
+  --path=flux/clusters/homelab
+```
+
+Após o bootstrap, todas as mudanças são aplicadas automaticamente via GitOps. Para forçar uma reconciliação:
+```bash
+./flux.sh reconcile source git flux-system
+./flux.sh reconcile kustomization infrastructure cert-manager-issuer apps
+```
+
+### Componentes de infraestrutura
+
+| Componente | Função |
+|---|---|
+| cert-manager | Gerenciamento automático de certificados TLS |
+| ingress-nginx | Controller de ingress HTTP/HTTPS |
+| local-path-provisioner | Provisionamento dinâmico de PVCs em nó único |
+| goldilocks | Recomendações de resource requests/limits |
+
+### Aplicações
+
+| App | Descrição |
+|---|---|
+| whoami | Serviço HTTP echo simples para testar ingress |
+| minecraft | Servidor Minecraft Java (NodePort 30565) |
 
 ---
 
-## Scripts utilitários (raiz)
+## Scripts utilitários
 
 | Script | Função |
 |---|---|
-| `kubectl.sh` | Wrapper do `kubectl` usando o kubeconfig local |
-| `k9s.sh` | Wrapper do `k9s` usando o kubeconfig local |
-| `flux.sh` | Wrapper da CLI `flux` |
+| `kubectl.sh` | Wrapper do `kubectl` usando `ansible/.kube/config` |
+| `k9s.sh` | Wrapper do `k9s` usando `ansible/.kube/config` |
+| `flux.sh` | Wrapper da CLI `flux` (instala o flux automaticamente se necessário) |
 
 ---
 
 ## Referências
 
 - [Documentação Kubespray](https://kubespray.io/)
-- [Documentação Kubernetes](https://kubernetes.io/docs/)
 - [Documentação Flux CD](https://fluxcd.io/docs/)
+- [Documentação SOPS](https://github.com/getsops/sops)
 - [Documentação WireGuard](https://www.wireguard.com/)
 - [Documentação k9s](https://k9scli.io/)
