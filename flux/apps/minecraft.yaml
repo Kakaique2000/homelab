@@ -83,6 +83,7 @@ spec:
       maxPlayers: 20
       motd: "Minecraft - Homelab"
       onlineMode: false
+      enforceSecureProfile: false
       memory: 3072M
       viewDistance: 6
       jvmOpts: ""
