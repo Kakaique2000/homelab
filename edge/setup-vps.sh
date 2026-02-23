@@ -35,10 +35,7 @@ if [ ! -f "$SSH_KEY" ]; then
 fi
 
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
-
-vssh() {
-  ssh $SSH_OPTS "${VPS_USER}@${VPS_IP}" "$@"
-}
+vssh() { ssh $SSH_OPTS "${VPS_USER}@${VPS_IP}" "$@"; }
 
 echo "=== VPS Edge Setup ==="
 echo ""
@@ -49,7 +46,7 @@ echo ""
 # ============================================================
 # Step 1: Copy SSH key to VPS
 # ============================================================
-echo "[1/7] Copying SSH key to VPS..."
+echo "[1/6] Copying SSH key to VPS..."
 echo "  (You may be prompted for the VPS password once)"
 ssh-copy-id \
   -i "${SSH_KEY}.pub" \
@@ -69,15 +66,15 @@ echo ""
 # ============================================================
 # Step 2: Install packages
 # ============================================================
-echo "[2/7] Installing wireguard-tools and nginx..."
-vssh "sudo apt-get update -qq && sudo apt-get install -y wireguard-tools nginx libnginx-mod-stream"
+echo "[2/6] Installing wireguard-tools, nginx, and rsync..."
+vssh "sudo apt-get update -qq && sudo apt-get install -y wireguard-tools nginx libnginx-mod-stream rsync"
 echo "  ✓ Packages installed"
 echo ""
 
 # ============================================================
 # Step 3: Set up WireGuard
 # ============================================================
-echo "[3/7] Configuring WireGuard hub..."
+echo "[3/6] Configuring WireGuard hub..."
 
 vssh "sudo mkdir -p /etc/wireguard/peers && sudo chmod 700 /etc/wireguard"
 
@@ -89,27 +86,21 @@ VPS_PUBKEY=$(vssh "
   fi
   sudo cat /etc/wireguard/vps-public.key
 ")
-
 echo "  VPS WireGuard public key: $VPS_PUBKEY"
 
-# Write wg0.conf
-vssh "
-  sudo tee /etc/wireguard/wg0.conf > /dev/null << 'WGEOF'
+VPS_PRIVKEY=$(vssh "sudo cat /etc/wireguard/vps-private.key")
+vssh "sudo tee /etc/wireguard/wg0.conf > /dev/null << WGEOF
 [Interface]
 Address = ${WG_VPS_IP}/24
 ListenPort = ${WG_PORT}
-PrivateKey = \$(sudo cat /etc/wireguard/vps-private.key)
+PrivateKey = ${VPS_PRIVKEY}
 
-# Load peer configs at startup (also picked up by wg addconf on register)
+# Load peer configs at startup
 PostUp   = for f in /etc/wireguard/peers/*.conf; do [ -f \"\$f\" ] && wg addconf wg0 \"\$f\" 2>/dev/null || true; done
 PostDown = true
 WGEOF
+sudo chmod 600 /etc/wireguard/wg0.conf
 "
-
-# Replace the \$(sudo cat ...) with the actual key (wg-quick doesn't support command substitution)
-VPS_PRIVKEY=$(vssh "sudo cat /etc/wireguard/vps-private.key")
-vssh "sudo sed -i 's|PrivateKey = \$(sudo cat /etc/wireguard/vps-private.key)|PrivateKey = ${VPS_PRIVKEY}|' /etc/wireguard/wg0.conf"
-vssh "sudo chmod 600 /etc/wireguard/wg0.conf"
 
 vssh "sudo systemctl enable --now wg-quick@wg0 2>/dev/null || sudo systemctl restart wg-quick@wg0"
 echo "  ✓ WireGuard hub running"
@@ -118,7 +109,7 @@ echo ""
 # ============================================================
 # Step 4: Configure firewall
 # ============================================================
-echo "[4/7] Configuring firewall..."
+echo "[4/6] Configuring firewall..."
 vssh "
   if sudo ufw status | grep -q 'Status: active'; then
     sudo ufw allow ${WG_PORT}/udp
@@ -132,161 +123,116 @@ vssh "
 echo ""
 
 # ============================================================
-# Step 5: Install upstream regeneration script on VPS
+# Step 5: Install regen-nginx-upstream.sh on VPS
 # ============================================================
-echo "[5/7] Installing nginx upstream regeneration script..."
+echo "[5/6] Installing nginx upstream regeneration script..."
 
-vssh "sudo tee /usr/local/sbin/regen-nginx-upstream.sh > /dev/null << 'REGENEOF'
+vssh "sudo tee /usr/local/sbin/regen-nginx-upstream.sh > /dev/null" << 'REGENEOF'
 #!/bin/bash
-# Regenerates nginx upstreams from WireGuard peer files.
-# Called automatically by register-node.sh and remove-node.sh.
+# Regenerates nginx upstream lists by injecting real WireGuard node IPs
+# into the stream port configs synced from edge/nginx/stream/ports/.
+# Called by deploy-nginx.sh after rsync.
 set -e
 
-PEERS_DIR=\"/etc/wireguard/peers\"
-HTTP_UPSTREAM=\"/etc/nginx/conf.d/k8s-upstream.conf\"
-STREAM_PORTS_DIR=\"/etc/nginx/stream.conf.d/ports\"
+PEERS_DIR="/etc/wireguard/peers"
+HTTP_UPSTREAM="/etc/nginx/conf.d/k8s-upstream.conf"
+STREAM_PORTS_DIR="/etc/nginx/stream.conf.d/ports"
 
-# Collect all registered node WG IPs and names
+# Collect all registered node WG IPs
 declare -a NODE_IPS NODE_NAMES
 while IFS= read -r -d '' f; do
-  node_name=\$(grep '^#' \"\$f\" | head -1 | sed 's/^# *//')
-  wg_ip=\$(grep 'AllowedIPs' \"\$f\" | awk '{print \$3}' | cut -d/ -f1)
-  [ -n \"\$wg_ip\" ] || continue
-  NODE_IPS+=(\"\$wg_ip\")
-  NODE_NAMES+=(\"\${node_name:-unknown}\")
-done < <(find \"\$PEERS_DIR\" -name '*.conf' -print0 2>/dev/null)
+  node_name=$(grep '^#' "$f" | head -1 | sed 's/^# *//')
+  wg_ip=$(grep 'AllowedIPs' "$f" | awk '{print $3}' | cut -d/ -f1)
+  [ -n "$wg_ip" ] || continue
+  NODE_IPS+=("$wg_ip")
+  NODE_NAMES+=("${node_name:-unknown}")
+done < <(find "$PEERS_DIR" -name '*.conf' -print0 2>/dev/null)
 
 # Regenerate HTTP upstream
 {
   echo 'upstream k8s_ingress {'
-  if [ \${#NODE_IPS[@]} -eq 0 ]; then
-    echo '    server 127.0.0.1:65535 down;  # placeholder — no nodes registered yet'
+  if [ ${#NODE_IPS[@]} -eq 0 ]; then
+    echo '    server 127.0.0.1:65535 down;  # no nodes registered yet'
   else
-    for i in \"\${!NODE_IPS[@]}\"; do
-      echo \"    server \${NODE_IPS[\$i]}:80;  # \${NODE_NAMES[\$i]}\"
+    for i in "${!NODE_IPS[@]}"; do
+      echo "    server ${NODE_IPS[$i]}:80;  # ${NODE_NAMES[$i]}"
     done
   fi
   echo '}'
-} | sudo tee \"\$HTTP_UPSTREAM\" > /dev/null
+} | sudo tee "$HTTP_UPSTREAM" > /dev/null
 
-# Regenerate all TCP/UDP stream port upstreams
-if [ -d \"\$STREAM_PORTS_DIR\" ]; then
-  for port_conf in \"\$STREAM_PORTS_DIR\"/*.conf; do
-    [ -f \"\$port_conf\" ] || continue
-    # Extract port and protocol from filename (e.g. 25565-tcp.conf)
-    filename=\$(basename \"\$port_conf\" .conf)
-    port=\$(echo \"\$filename\" | cut -d- -f1)
-    proto=\$(echo \"\$filename\" | cut -d- -f2)
-    upstream_name=\"k8s_stream_\${port}\"
+# Regenerate stream port configs from declarative metadata comments.
+# Each .conf in STREAM_PORTS_DIR must declare:
+#   # VPS_PORT=<port>
+#   # NODE_PORT=<port>
+#   # PROTO=<tcp|udp>
+if [ -d "$STREAM_PORTS_DIR" ]; then
+  for port_conf in "$STREAM_PORTS_DIR"/*.conf; do
+    [ -f "$port_conf" ] || continue
+
+    vps_port=$(grep -m1 '^# VPS_PORT=' "$port_conf" | cut -d= -f2)
+    node_port=$(grep -m1 '^# NODE_PORT=' "$port_conf" | cut -d= -f2)
+    proto=$(grep -m1 '^# PROTO=' "$port_conf" | cut -d= -f2)
+
+    # Fall back to filename-based detection for legacy files
+    if [ -z "$vps_port" ]; then
+      filename=$(basename "$port_conf" .conf)
+      vps_port=$(echo "$filename" | cut -d- -f1)
+      proto=$(echo "$filename" | cut -d- -f2)
+      node_port="$vps_port"
+    fi
+
+    upstream_name="k8s_stream_${vps_port}_${proto}"
+
     {
-      echo \"upstream \${upstream_name} {\"
-      if [ \${#NODE_IPS[@]} -eq 0 ]; then
-        echo '    server 127.0.0.1:65535 down;'
+      echo "# VPS_PORT=${vps_port}"
+      echo "# NODE_PORT=${node_port}"
+      echo "# PROTO=${proto}"
+      echo "upstream ${upstream_name} {"
+      if [ ${#NODE_IPS[@]} -eq 0 ]; then
+        echo '    server 127.0.0.1:65535 down;  # no nodes registered yet'
       else
-        for i in \"\${!NODE_IPS[@]}\"; do
-          echo \"    server \${NODE_IPS[\$i]}:\${port};  # \${NODE_NAMES[\$i]}\"
+        for i in "${!NODE_IPS[@]}"; do
+          echo "    server ${NODE_IPS[$i]}:${node_port};  # ${NODE_NAMES[$i]}"
         done
       fi
       echo '}'
-      echo \"server {\"
-      echo \"    listen \${port}\$([ \"\$proto\" = 'udp' ] && echo ' udp' || echo '');\"
-      echo \"    proxy_pass \${upstream_name};\"
+      echo "server {"
+      echo "    listen ${vps_port}$([ "$proto" = 'udp' ] && echo ' udp' || echo '');"
+      echo "    proxy_pass ${upstream_name};"
       echo '}'
-    } | sudo tee \"\$port_conf\" > /dev/null
+    } | sudo tee "$port_conf" > /dev/null
   done
 fi
 
 sudo nginx -t && sudo systemctl reload nginx
-node_count=\${#NODE_IPS[@]}
-echo \"Upstreams regenerated with \${node_count} node(s)\"
+echo "Upstreams regenerated with ${#NODE_IPS[@]} node(s)"
 REGENEOF
-"
+
 vssh "sudo chmod +x /usr/local/sbin/regen-nginx-upstream.sh"
 echo "  ✓ Regeneration script installed"
 echo ""
 
 # ============================================================
-# Step 6: Configure nginx
+# Step 6: Save state locally and deploy nginx config
 # ============================================================
-echo "[6/7] Configuring nginx..."
-
-# Ensure stream module config directory exists
-vssh "sudo mkdir -p /etc/nginx/stream.conf.d/ports"
-
-# Add stream block to nginx.conf if not already there
-vssh "
-  if ! grep -q 'stream.conf.d' /etc/nginx/nginx.conf; then
-    # Insert load_module directive at the top if not present
-    if ! grep -q 'ngx_stream_module' /etc/nginx/nginx.conf; then
-      sudo sed -i '1s|^|load_module modules/ngx_stream_module.so;\n|' /etc/nginx/nginx.conf
-    fi
-    echo '
-stream {
-    include /etc/nginx/stream.conf.d/*.conf;
-    include /etc/nginx/stream.conf.d/ports/*.conf;
-}' | sudo tee -a /etc/nginx/nginx.conf > /dev/null
-  fi
-"
-
-# Write initial (empty) HTTP upstream placeholder
-vssh "sudo tee /etc/nginx/conf.d/k8s-upstream.conf > /dev/null << 'UPEOF'
-upstream k8s_ingress {
-    server 127.0.0.1:65535 down;  # placeholder — no nodes registered yet
-}
-UPEOF
-"
-
-# Write HTTP proxy site
-vssh "sudo tee /etc/nginx/sites-available/k8s-edge > /dev/null << 'SITEEOF'
-server {
-    listen 80;
-    server_name _;
-
-    location / {
-        proxy_pass         http://k8s_ingress;
-        proxy_set_header   Host              \$host;
-        proxy_set_header   X-Real-IP         \$remote_addr;
-        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 5s;
-        proxy_read_timeout    60s;
-    }
-}
-SITEEOF
-"
-
-# Enable site, remove default
-vssh "
-  sudo ln -sf /etc/nginx/sites-available/k8s-edge /etc/nginx/sites-enabled/k8s-edge
-  sudo rm -f /etc/nginx/sites-enabled/default
-  sudo nginx -t && sudo systemctl enable --now nginx && sudo systemctl reload nginx
-"
-echo "  ✓ nginx configured"
-echo ""
-
-# ============================================================
-# Step 7: Save state locally
-# ============================================================
-echo "[7/7] Saving VPS info locally..."
+echo "[6/6] Saving VPS info and deploying nginx config..."
 
 echo "$VPS_IP" > "$SCRIPT_DIR/.vps-ip"
 echo "$VPS_USER" > "$SCRIPT_DIR/.vps-user"
 echo "$VPS_PUBKEY" > "$SCRIPT_DIR/.vps-wg-public.key"
-
 echo "  ✓ Saved .vps-ip, .vps-user, .vps-wg-public.key"
+
+"$SCRIPT_DIR/deploy-nginx.sh"
 echo ""
 
 echo "=== VPS Edge Setup Complete ==="
 echo ""
-echo "Configuration:"
 echo "  VPS:             $VPS_USER@$VPS_IP"
 echo "  WireGuard hub:   $WG_VPS_IP ($WG_SUBNET)"
 echo "  WireGuard port:  $WG_PORT/udp"
 echo ""
 echo "Next steps:"
-echo "  1. Register your cluster nodes:"
-echo "     ./register-node.sh k8s-master <node-local-ip>"
-echo ""
-echo "  2. (Optional) Expose extra TCP/UDP ports:"
-echo "     ./add-port.sh 25565 tcp   # Minecraft"
+echo "  1. Register cluster nodes:  ./register-node.sh k8s-master <node-ip>"
+echo "  2. Expose extra ports:      ./add-port.sh 25565 tcp --node-port 30565"
 echo ""

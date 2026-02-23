@@ -86,17 +86,18 @@ spec:
       maxPlayers: 20
       motd: "Minecraft - Homelab"
       onlineMode: true
-      memory: 2048M
+      memory: 3072M
+      viewDistance: 6
       jvmOpts: ""
-      jvmXXOpts: ""
+      jvmXXOpts: "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1"
 
     resources:
       requests:
-        memory: 2Gi
-        cpu: 500m
-      limits:
         memory: 3Gi
-        cpu: 2000m
+        cpu: 1000m
+      limits:
+        memory: 4Gi
+        cpu: 3000m
 
     persistence:
       dataDir:
@@ -106,9 +107,10 @@ spec:
         size: 10Gi
 
     service:
-      # ClusterIP: não exposto diretamente, só acessível pelo mc-router
-      type: ClusterIP
+      # NodePort: acessível diretamente via node:30065 além do mc-router
+      type: NodePort
       port: 25565
+      nodePort: 30065
       rcon:
         enabled: false
 

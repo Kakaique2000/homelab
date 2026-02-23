@@ -133,8 +133,8 @@ sudo wg addconf wg0 /etc/wireguard/peers/${NODE_NAME}.conf
 echo "  ✓ Peer added to VPS WireGuard (live, no restart)"
 echo ""
 
-# Regenerate nginx upstreams (HTTP + all TCP stream ports)
-vssh "sudo /usr/local/sbin/regen-nginx-upstream.sh"
+# Deploy nginx config (rsync templates + regenerate upstreams + reload)
+"$SCRIPT_DIR/deploy-nginx.sh"
 echo ""
 
 # ============================================================

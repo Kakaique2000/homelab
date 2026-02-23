@@ -68,7 +68,7 @@ echo ""
 # Step 2: Regenerate nginx upstreams
 # ============================================================
 echo "[2/3] Updating nginx upstreams..."
-vssh "sudo /usr/local/sbin/regen-nginx-upstream.sh"
+"$SCRIPT_DIR/deploy-nginx.sh"
 echo ""
 
 # ============================================================
