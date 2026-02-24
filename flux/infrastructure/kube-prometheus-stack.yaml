@@ -1,0 +1,112 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: prometheus-community
+  namespace: monitoring
+spec:
+  interval: 1h
+  url: https://prometheus-community.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: monitoring
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: "65.x"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: monitoring
+  values:
+    # Prometheus configuration
+    prometheus:
+      prometheusSpec:
+        retention: 30d
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 50Gi
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+
+    # Grafana configuration
+    grafana:
+      enabled: true
+      adminPassword: "admin" # CHANGE THIS!
+      persistence:
+        enabled: true
+        size: 10Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      # Uncomment to expose Grafana via Ingress
+      ingress:
+        enabled: true
+        ingressClassName: nginx
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt-prod
+        hosts:
+          - grafana.kaique.cloud
+        tls:
+          - secretName: grafana-tls
+            hosts:
+              - grafana.kaique.cloud
+
+    # Alertmanager configuration
+    alertmanager:
+      enabled: true
+      alertmanagerSpec:
+        storage:
+          volumeClaimTemplate:
+            spec:
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 10Gi
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+    # Node Exporter
+    nodeExporter:
+      enabled: true
+
+    # Kube State Metrics
+    kubeStateMetrics:
+      enabled: true
+
+    # Disable if you don't need these
+    kubeControllerManager:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeProxy:
+      enabled: false
+    kubeEtcd:
+      enabled: false
