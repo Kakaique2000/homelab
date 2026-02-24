@@ -61,7 +61,16 @@ spec:
         limits:
           cpu: 500m
           memory: 512Mi
-      # Uncomment to expose Grafana via Ingress
+      readinessProbe:
+        initialDelaySeconds: 60
+        periodSeconds: 10
+        timeoutSeconds: 10
+        failureThreshold: 10
+      livenessProbe:
+        initialDelaySeconds: 90
+        periodSeconds: 10
+        timeoutSeconds: 10
+        failureThreshold: 10
       ingress:
         enabled: true
         ingressClassName: nginx
